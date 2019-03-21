@@ -1,7 +1,11 @@
 from typing import Iterator, Sequence, Text, Tuple, Union
-
+from scipy.sparse import vstack, coo_matrix
 import numpy as np
 from scipy.sparse import spmatrix
+from sklearn.feature_extraction import DictVectorizer
+from sklearn.preprocessing import LabelEncoder
+from sklearn.linear_model import LogisticRegression
+import warnings
 
 NDArray = Union[np.ndarray, spmatrix]
 TokenSeq = Sequence[Text]
@@ -34,10 +38,27 @@ def read_ptbtagged(ptbtagged_path: str) -> Iterator[Tuple[TokenSeq, PosSeq]]:
     a sequence of tokens and a corresponding sequence of part-of-speech tags.
     """
 
+    with open(ptbtagged_path) as infile:
+        tok = []
+        pos = []
+        for line in infile:
+            line = line.strip()
+            if not line:
+                yield (tok, pos)
+                tok = []
+                pos = []
+                continue
+            line = line.split("\t")
+            tok.append(line[0])
+            pos.append(line[1])
+        yield (tok, pos)
+
+
 
 class Classifier(object):
     def __init__(self):
         """Initializes the classifier."""
+        self.lg = LogisticRegression(solver = "liblinear", penalty = "l1", C = 1.5)
 
     def train(self, tagged_sentences: Iterator[Tuple[TokenSeq, PosSeq]]) -> Tuple[NDArray, NDArray]:
         """Trains the classifier on the part-of-speech tagged sentences,
@@ -72,6 +93,30 @@ class Classifier(object):
         :return: A tuple of (feature-matrix, label-vector).
         """
 
+        self.dv = DictVectorizer()
+        self.le = LabelEncoder()
+        whole_doc = []
+        label = []
+        for tok, pos in tagged_sentences:
+            label += pos
+            pos.insert(0, "<s>")
+            tok = [("token=" + x) for x in tok]
+            pos = [("pos-1=" + x) for x in pos]
+            word_list = list(zip(tok, pos))
+            for word in word_list:
+                feature_count = {feature: word.count(feature) for feature in word}
+                whole_doc.append(feature_count)
+            
+        self.dv.fit(whole_doc)
+        self.le.fit(label)
+        
+        feature_matrix = self.dv.transform(whole_doc)
+        label_matrix = self.le.transform(label)
+
+        self.lg.fit(feature_matrix, label_matrix)
+
+        return (feature_matrix, label_matrix)
+
     def feature_index(self, feature: Text) -> int:
         """Returns the column index corresponding to the given named feature.
 
@@ -81,6 +126,7 @@ class Classifier(object):
         :return: The column index of the feature in the feature matrix returned
         by the `train` method.
         """
+        return self.dv.vocabulary_[feature]
 
     def label_index(self, label: Text) -> int:
         """Returns the integer corresponding to the given part-of-speech tag
@@ -91,6 +137,7 @@ class Classifier(object):
         :return: The integer for the part-of-speech tag, to be used in the label
         vector returned by the `train` method.
         """
+        return self.le.transform([label])[0]
 
     def predict(self, tokens: TokenSeq) -> PosSeq:
         """Predicts part-of-speech tags for the sequence of tokens.
@@ -121,6 +168,22 @@ class Classifier(object):
         :return: The feature matrix and the sequence of predicted part-of-speech
         tags (one for each input token).
         """
+        warnings.filterwarnings(action='ignore', category=DeprecationWarning)
+        label = "<s>"
+        feature_list = []
+        label_list = []
+        for word in tokens:
+            token = "token=" + word
+            pos = "pos-1=" + label
+            word_list = {token: 1, pos: 1}
+            feature = self.dv.transform(word_list)
+            label_num = self.lg.predict(feature)
+            label = self.le.inverse_transform(label_num).item(0)
+            feature_list.append(coo_matrix(feature))
+            label_list.append(label)
+        feature_matrix = vstack(feature_list).toarray()
+
+        return (feature_matrix, label_list)
 
     def predict_viterbi(self, tokens: TokenSeq) -> Tuple[NDArray, NDArray, PosSeq]:
         """Predicts part-of-speech tags for the sequence of tokens using the
