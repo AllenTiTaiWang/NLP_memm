@@ -5,7 +5,6 @@ from scipy.sparse import spmatrix
 from sklearn.feature_extraction import DictVectorizer
 from sklearn.preprocessing import LabelEncoder
 from sklearn.linear_model import LogisticRegression
-import warnings
 
 NDArray = Union[np.ndarray, spmatrix]
 TokenSeq = Sequence[Text]
@@ -58,7 +57,7 @@ def read_ptbtagged(ptbtagged_path: str) -> Iterator[Tuple[TokenSeq, PosSeq]]:
 class Classifier(object):
     def __init__(self):
         """Initializes the classifier."""
-        self.lg = LogisticRegression(solver = "liblinear", penalty = "l1", C = 1.5)
+        self.lg = LogisticRegression(solver = "liblinear", penalty = "l1", C = 1.5, multi_class = "auto")
 
     def train(self, tagged_sentences: Iterator[Tuple[TokenSeq, PosSeq]]) -> Tuple[NDArray, NDArray]:
         """Trains the classifier on the part-of-speech tagged sentences,
@@ -168,7 +167,7 @@ class Classifier(object):
         :return: The feature matrix and the sequence of predicted part-of-speech
         tags (one for each input token).
         """
-        warnings.filterwarnings(action='ignore', category=DeprecationWarning)
+
         label = "<s>"
         feature_list = []
         label_list = []
@@ -178,7 +177,7 @@ class Classifier(object):
             word_list = {token: 1, pos: 1}
             feature = self.dv.transform(word_list)
             label_num = self.lg.predict(feature)
-            label = self.le.inverse_transform(label_num).item(0)
+            label = self.le.inverse_transform(label_num)[0]
             feature_list.append(coo_matrix(feature))
             label_list.append(label)
         feature_matrix = vstack(feature_list).toarray()
